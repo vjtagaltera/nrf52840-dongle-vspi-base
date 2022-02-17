@@ -28,4 +28,9 @@ follow the same process for vcp_base
     $ ls -l flash_*
     -rwxrwxr-x+ 1   6222 Mar 20  2021 flash_placement.xml
 
+rename project board files
+
+    $ git mv spi_pca10056.emProject vspi_base_pca10059.emProject
+    $ git mv spi_pca10056.emSession vspi_base_pca10059.emSession
+
 
