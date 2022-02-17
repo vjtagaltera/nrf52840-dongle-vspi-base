@@ -33,4 +33,6 @@ rename project board files
     $ git mv spi_pca10056.emProject vspi_base_pca10059.emProject
     $ git mv spi_pca10056.emSession vspi_base_pca10059.emSession
 
+  change 3 places of spi_PCA10056 in board files, and one of BOARD_PCA10056. 
+
 
