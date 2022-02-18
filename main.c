@@ -88,6 +88,18 @@ int main(void)
     APP_ERROR_CHECK(nrf_drv_spi_init(&spi, &spi_config, spi_event_handler, NULL));
 
     NRF_LOG_INFO("SPI example started.");
+    NRF_LOG_INFO("SPI pins 20 32 31 13: %d %d %d %d", SPI_SS_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SPI_SCK_PIN);
+    NRF_LOG_PROCESS();
+
+    uint32_t loop_count = 0;
+    NRF_LOG_INFO("SPI example loop count %u", ++loop_count);
+    NRF_LOG_PROCESS();
+
+    /* LED1 does not blink. LED2 ok. */
+    #define LED1_GREEN BSP_BOARD_LED_0  // 0.6
+    #define LED2_RED   BSP_BOARD_LED_1  // 0.8
+    #define LED2_GREEN BSP_BOARD_LED_2  // 1.9
+    #define LED2_BLUE  BSP_BOARD_LED_3  // 0.12
 
     while (1)
     {
@@ -97,14 +109,28 @@ int main(void)
 
         APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, m_tx_buf, m_length, m_rx_buf, m_length));
 
+        uint32_t inner_loop_count = 0;
         while (!spi_xfer_done)
         {
-            __WFE();
+            //__WFE();
+            /* blink blue if it hits here by end of 200ms */
+            if ( ((++inner_loop_count)%20) == 0 ) {
+                bsp_board_led_invert(LED2_BLUE);
+                if ( (inner_loop_count%200) == 0 ) {
+                    NRF_LOG_INFO("SPI example inner loop blink %u", inner_loop_count);
+                    NRF_LOG_PROCESS();
+                }
+            }
+            nrf_delay_ms(10);
         }
 
+        NRF_LOG_INFO("SPI example loop count %u", ++loop_count);
         NRF_LOG_FLUSH();
 
-        bsp_board_led_invert(BSP_BOARD_LED_0);
+        //bsp_board_led_invert(BSP_BOARD_LED_0);
+        bsp_board_led_invert(LED2_RED);
         nrf_delay_ms(200);
+        /* also blink green */
+        bsp_board_led_invert(LED2_GREEN);
     }
 }

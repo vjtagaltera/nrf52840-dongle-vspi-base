@@ -36,3 +36,14 @@ rename project board files
   change 3 places of spi_PCA10056 in board files, and one of BOARD_PCA10056. 
 
 
+spi testing: 
+
+  [1] enable rtt logging.
+  [2] add NRF_LOG_PROCESS() call after a message to get it showing up.
+  [3] blink LED2 not LED1.
+  [4] avoid using pin 9 and pin 10. 
+
+  observed 4M data in mode 0, clk active high, data change on falling edge. 
+  debugger shows read data on miso pin.
+
+
