@@ -79,7 +79,7 @@ void spi_event_handler(nrf_drv_spi_evt_t const * p_event,
 static int display_xfer(uint8_t rw, uint8_t rs, uint8_t data)
 {
     memset(m_tx_buf, 0, 3);
-    m_tx_buf[0] = 0xf8 | ((rw&1) << 2) |( (rw&1) << 1);
+    m_tx_buf[0] = 0xf8 | ((rw&1) << 2) |( (rs&1) << 1);
     m_tx_buf[1] = ((data&1) << 7) | ((data&2) << 5) | ((data&4) << 3) | ((data&8) << 1);
     m_tx_buf[2] = ((data&0x10) << 3) | ((data&0x20) << 1) | ((data&0x40) >> 1) | ((data&0x80) >> 3);
 
@@ -158,9 +158,9 @@ static int display_sequence_run(uint8_t *seqd, uint32_t seq_sz)
             break;
         }
         bsp_board_led_invert(LED2_GREEN);
-        nrf_delay_ms(200);
+        nrf_delay_ms(10);
         bsp_board_led_invert(LED2_GREEN);
-        nrf_delay_ms(200);
+        nrf_delay_ms(10);
 
         NRF_LOG_INFO("SPI sequqnce  %u  rc2 %d", seq_idx, rc2);
         NRF_LOG_FLUSH();
@@ -190,6 +190,22 @@ static int display_sequence_contrast_set(uint8_t val)
                         0x54 | ((val & 0x30) >> 4), //0x56, /* bit 1:0==c5:c4 */
                         0x70 | ((val & 0x0f)     ), //0x7a, /* bit 3:0==c3:c0 */
                         0x38};
+    uint32_t seq_sz = sizeof(seqd);
+    return display_sequence_run(seqd, seq_sz);
+}
+
+static int display_sequence_rom_a_select()
+{
+    uint8_t seqd[] = {0x3a, 0x72, 
+                        0x00, /* 0x00 rom a, 0x04 rom b, 0x08/0x0c rom c */ 
+                        0x38};
+    uint32_t seq_sz = sizeof(seqd);
+    return display_sequence_run(seqd, seq_sz);
+}
+
+static int display_sequence_return_home()
+{
+    uint8_t seqd[] = {0x39, 0x2, 0x38, 0x0f};
     uint32_t seq_sz = sizeof(seqd);
     return display_sequence_run(seqd, seq_sz);
 }
@@ -233,6 +249,111 @@ static int display_sequence()
     rc = display_sequence_contrast_set(val);
     NRF_LOG_INFO("  CONTRAST set      val %u  rc %d", val, rc);
     NRF_LOG_PROCESS();
+
+    /* display function set: 
+     *      0x38  :  RE=0, IS=0
+     *      0x39  :  RE=0, IS=1
+     *      0x3a  :  RE=1, REV=0
+     *      0x3b  :  RE=1, REV=1
+     * clear display:
+     *      RE/IS=x/x rs/rw=0/0 data=1
+     * return home:
+     *      RE/IS=0/x rs/rw=0/0 data=2
+     * entry mode:
+     *      RE/IS=0/x rs/rw=0/0 data bit7:3=0, bit2=1, bit1=(high=move_right), bit0=(0=no_shift)
+     * set ddram address:
+     *      RE/IS=0/x rs/rw=0/0 data bit7=1, bit6:0=ac6:0
+     * write data:
+     *      RE/IS=x/x rs/rw=1/0 data=data
+     * rom selection
+     *      RE/IS=x/x rs/rw=1/0 data=(0x00 select rom A)
+     */
+
+    nrf_delay_ms(100); NRF_LOG_PROCESS();
+
+    //rc = display_sequence_rom_a_select();
+    //NRF_LOG_INFO("  ROM-A             rc %d", rc); NRF_LOG_PROCESS();
+    //nrf_delay_ms(10);
+    //if ( rc != 0 ) return 1;
+
+    rc = display_sequence_return_home();
+    NRF_LOG_INFO("  HOME              rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    //rc = display_xfer(0, 0, 6);
+    //NRF_LOG_INFO("  ENTRY             rc %d", rc); NRF_LOG_PROCESS();
+    //nrf_delay_ms(10);
+    //if ( rc != 0 ) return 1;
+
+    /* clear screen */
+    rc = display_xfer(0, 0, 1);
+    NRF_LOG_INFO("  CLEAR             rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    /* ddram 0 */
+    rc = display_xfer(0, 0, 0x80);
+    NRF_LOG_INFO("  DDRAM 0x00        rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    NRF_LOG_INFO("  WRITE data line 1"); NRF_LOG_PROCESS();
+
+    int wr_idx = 0;
+    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
+        rc = display_xfer(0, 1/*rs*/, 'A' + wr_idx);
+        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
+        nrf_delay_ms(10);
+        if ( rc != 0 ) {
+            return 1;
+        }
+        NRF_LOG_PROCESS();
+    }
+
+    /* ddram 0x20 */
+    rc = display_xfer(0, 0, 0x80 + 0x20);
+    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    NRF_LOG_INFO("  WRITE data line 2"); NRF_LOG_PROCESS();
+
+    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
+        rc = display_xfer(0, 1/*rs*/, 'a' + wr_idx);
+        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
+        nrf_delay_ms(10);
+        if ( rc != 0 ) {
+            return 1;
+        }
+        NRF_LOG_PROCESS();
+    }
+
+    /* ddram 0x48 */
+    rc = display_xfer(0, 0, 0x80 + 0x48);
+    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    NRF_LOG_INFO("  WRITE data line 3"); NRF_LOG_PROCESS();
+
+    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
+        rc = display_xfer(0, 1/*rs*/, 'a' + wr_idx);
+        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
+        nrf_delay_ms(10);
+        if ( rc != 0 ) {
+            return 1;
+        }
+        NRF_LOG_PROCESS();
+    }
+
+    /* ddram 0x60 */
+    rc = display_xfer(0, 0, 0x80 + 0x60);
+    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
+    nrf_delay_ms(10);
+    if ( rc != 0 ) return 1;
+
+    NRF_LOG_INFO("  WRITE data line 4"); NRF_LOG_PROCESS();
 
     return 0;
 
