@@ -73,6 +73,183 @@ void spi_event_handler(nrf_drv_spi_evt_t const * p_event,
     }
 }
 
+/* -------------------------------------------------------- */
+/* EA DOGS164B-A LCD MOD 64DIG 16X4 TRANSMISV WHT */
+
+static int display_xfer(uint8_t rw, uint8_t rs, uint8_t data)
+{
+    memset(m_tx_buf, 0, 3);
+    m_tx_buf[0] = 0xf8 | ((rw&1) << 2) |( (rw&1) << 1);
+    m_tx_buf[1] = ((data&1) << 7) | ((data&2) << 5) | ((data&4) << 3) | ((data&8) << 1);
+    m_tx_buf[2] = ((data&0x10) << 3) | ((data&0x20) << 1) | ((data&0x40) >> 1) | ((data&0x80) >> 3);
+
+        spi_xfer_done = false;
+        ret_code_t rc = nrf_drv_spi_transfer(&spi, m_tx_buf, 3, m_rx_buf, 3);
+        if (rc != NRF_SUCCESS) {
+            return 1;
+        }
+
+    #define LED2_BLUE  BSP_BOARD_LED_3  // 0.12
+        uint32_t inner_loop_count = 0;
+        while (!spi_xfer_done)
+        {
+            /* blink blue if it hits here by end of 200ms */
+            if ( ((++inner_loop_count)%200) == 0 ) {
+                bsp_board_led_invert(LED2_BLUE);
+                if ( (inner_loop_count%2000) == 0 ) {
+                    NRF_LOG_INFO("SPI example inner loop blink %u", inner_loop_count);
+                    NRF_LOG_PROCESS();
+                }
+            }
+            nrf_delay_ms(1);
+        }
+    #undef LED2_BLUE
+
+    return 0;
+}
+
+static int display_sequence_repeat()
+{
+    /* LED1 does not blink. LED2 ok. */
+    #define LED2_GREEN BSP_BOARD_LED_2  // 1.9
+
+    uint8_t seqd[] = {0x80};
+    uint32_t seq_sz = sizeof(seqd);
+
+    int rc1 = 0;
+
+  while(1) {
+    uint32_t seq_idx = 0;
+    for ( seq_idx = 0; seq_idx < seq_sz; seq_idx ++)
+    {
+        int rc2 = display_xfer(0, 0, seqd[seq_idx]);
+        if ( rc2 != 0 ) {
+            rc1 = 1;
+            NRF_LOG_INFO("SPI sequence  %u  rc2 %d  failed", seq_idx, rc2);
+            break;
+        }
+        bsp_board_led_invert(LED2_GREEN);
+        nrf_delay_ms(200);
+        bsp_board_led_invert(LED2_GREEN);
+        nrf_delay_ms(200);
+
+        NRF_LOG_INFO("SPI sequqnce  %u  rc2 %d", seq_idx, rc2);
+        NRF_LOG_PROCESS();
+    }
+  }
+
+    #undef LED2_GREEN
+
+    return rc1;
+}
+
+static int display_sequence_run(uint8_t *seqd, uint32_t seq_sz)
+{
+    int rc1 = 0;
+    /* LED1 does not blink. LED2 ok. */
+    #define LED2_GREEN BSP_BOARD_LED_2  // 1.9
+    uint32_t seq_idx = 0;
+    for ( seq_idx = 0; seq_idx < seq_sz; seq_idx ++) {
+        int rc2 = display_xfer(0, 0, seqd[seq_idx]);
+        if ( rc2 != 0 ) {
+            rc1 = 1;
+            NRF_LOG_INFO("SPI sequence  %u  rc2 %d  failed", seq_idx, rc2);
+            NRF_LOG_FLUSH();
+            break;
+        }
+        bsp_board_led_invert(LED2_GREEN);
+        nrf_delay_ms(200);
+        bsp_board_led_invert(LED2_GREEN);
+        nrf_delay_ms(200);
+
+        NRF_LOG_INFO("SPI sequqnce  %u  rc2 %d", seq_idx, rc2);
+        NRF_LOG_FLUSH();
+    }
+    #undef LED2_GREEN
+    return rc1;
+}
+
+static int display_sequence_init()
+{
+    uint8_t seqd[] = {0x3a, 0x09, 0x06, 0x1e, 0x39, 0x1b, 0x6c, 
+                        0x56, //0x56, /* bit 1:0==c5:c4 */
+                        0x7a, /* bit 3:0==c3:c0 */
+                        0x38, 
+                            /* rotate by 180 degree */
+                            //0x3a, 
+                            //0x05, /* 0x06==bottom_view, 0x05==top_view */
+                            //0x38, 
+                        0x0f};
+    uint32_t seq_sz = sizeof(seqd);
+    return display_sequence_run(seqd, seq_sz);
+}
+
+static int display_sequence_contrast_set(uint8_t val)
+{
+    uint8_t seqd[] = {0x39, 
+                        0x54 | ((val & 0x30) >> 4), //0x56, /* bit 1:0==c5:c4 */
+                        0x70 | ((val & 0x0f)     ), //0x7a, /* bit 3:0==c3:c0 */
+                        0x38};
+    uint32_t seq_sz = sizeof(seqd);
+    return display_sequence_run(seqd, seq_sz);
+}
+
+static int display_sequence_contrast_sweep()
+{
+    int rc = 0;
+    NRF_LOG_INFO("  CONTRAST sweep ...");
+    NRF_LOG_PROCESS();
+    uint8_t val = 0;
+    for ( val = 0; val < 32; val ++ ) {
+        int rc2 = display_sequence_contrast_set(val);
+        NRF_LOG_INFO("  CONTRAST set      val %u  rc2 %d", val, rc2);
+        NRF_LOG_PROCESS();
+        if ( rc2 != 0 ) { 
+            rc = 1;
+            break;
+        }
+        nrf_delay_ms(999);
+        NRF_LOG_PROCESS();
+    }
+    NRF_LOG_INFO("  CONTRAST sweep ... done");
+    NRF_LOG_PROCESS();
+    return rc;
+}
+
+static int display_sequence()
+{
+    int rc = 0;
+
+    /* init */
+    NRF_LOG_INFO("    SEQUENCE init ... ");
+    NRF_LOG_PROCESS();
+    rc = display_sequence_init();
+    NRF_LOG_INFO("    SEQUENCE init ... done rc %d ", rc);
+    NRF_LOG_PROCESS();
+    if ( rc != 0 ) return 1;
+
+    /* contrast  val 31 */
+    uint8_t val = 31;
+    rc = display_sequence_contrast_set(val);
+    NRF_LOG_INFO("  CONTRAST set      val %u  rc %d", val, rc);
+    NRF_LOG_PROCESS();
+
+    return 0;
+
+    /* repeat sweep contrast */
+    int i = 0;
+    for ( i=0; i<1000; i++ ) {
+        NRF_LOG_INFO("    SEQUENCE contrast sweep %d ... ", i);
+        NRF_LOG_PROCESS();
+        rc = display_sequence_contrast_sweep();
+        NRF_LOG_INFO("    SEQUENCE contrast sweep %d ... done rc %d ", i, rc);
+        NRF_LOG_PROCESS();
+        if ( rc != 0 ) return 1;
+    }
+    return 0;
+}
+/* -------------------------------------------------------- */
+
 int main(void)
 {
     bsp_board_init(BSP_INIT_LEDS);
@@ -85,6 +262,8 @@ int main(void)
     spi_config.miso_pin = SPI_MISO_PIN;
     spi_config.mosi_pin = SPI_MOSI_PIN;
     spi_config.sck_pin  = SPI_SCK_PIN;
+    spi_config.mode     = NRF_DRV_SPI_MODE_3;
+    spi_config.frequency = NRF_SPI_FREQ_125K;
     APP_ERROR_CHECK(nrf_drv_spi_init(&spi, &spi_config, spi_event_handler, NULL));
 
     NRF_LOG_INFO("SPI example started.");
@@ -114,6 +293,24 @@ int main(void)
     #define LED2_RED   BSP_BOARD_LED_1  // 0.8
     #define LED2_GREEN BSP_BOARD_LED_2  // 1.9
     #define LED2_BLUE  BSP_BOARD_LED_3  // 0.12
+
+    int rc = display_sequence();
+    while (1)
+    {
+        if ( rc == 0 ) {
+            bsp_board_led_invert(LED2_GREEN);
+        } else {
+            bsp_board_led_invert(LED2_RED);
+        }
+        nrf_delay_ms(800);
+        if ( rc == 0 ) {
+            bsp_board_led_invert(LED2_GREEN);
+        } else {
+            bsp_board_led_invert(LED2_RED);
+        }
+        nrf_delay_ms(800);
+        NRF_LOG_FLUSH();
+    }
 
     while (1)
     {
