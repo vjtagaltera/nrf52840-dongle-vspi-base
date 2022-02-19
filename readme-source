@@ -47,3 +47,71 @@ spi testing:
   debugger shows read data on miso pin.
 
 
+nfc pins for gpio:
+
+  https://devzone.nordicsemi.com/f/nordic-q-a/55719/ways-to-drive-nrf52840-port0-pin-9-p0-9-nfc-as-gpio
+  If you're using SEGGER Embedded Studios, go to Project>Edit Options>Cod>Preprocessor>Preprocessor Definitions 
+  and add the CONFIG_NFCT_PINS_AS_GPIOS variable.
+
+  https://devzone.nordicsemi.com/f/nordic-q-a/29041/how-to-enable-p0-09-and-p0-10-as-gpio-pins-on-the-nrf52-instead-of-nfc-pins
+  and add the compiler options for c/c++ compilers: 
+  -DCONFIG_NFCT_PINS_AS_GPIOS
+
+  after the changes both of the above: 
+    $ grep -r CONFIG_NFCT_PINS *
+    pca10059/blank/ses/vspi_base_pca10059.emProject:          c_preprocessor_definitions="CONFIG_NFCT_PINS_AS_GPIOS" />
+    pca10059/blank/ses/vspi_base_pca10059.emProject:      c_additional_options="-DCONFIG_NFCT_PINS_AS_GPIOS" />
+    readme-source:  and add the CONFIG_NFCT_PINS_AS_GPIOS variable.
+    readme-source:  -DCONFIG_NFCT_PINS_AS_GPIOS
+
+  relevant snippets in emProject file:
+    <folder Name="Board Support">
+      <file file_name="../../../../../../components/libraries/bsp/bsp.c" />
+    </folder>
+    <folder Name="Application">
+      <file file_name="../../../main.c">
+        <configuration
+          Name="Debug"
+          c_preprocessor_definitions="CONFIG_NFCT_PINS_AS_GPIOS" />
+      </file>
+      <file file_name="../config/sdk_config.h" />
+    </folder>
+    <folder Name="nRF_Segger_RTT">
+      <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />
+      <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT_Syscalls_SES.c" />
+      <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT_printf.c" />
+    </folder>
+    <folder Name="None">
+      <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf52840.s" />
+      <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf_common.s" />
+      <file file_name="../../../../../../modules/nrfx/mdk/system_nrf52840.c" />
+    </folder>
+    <configuration
+      Name="Debug"
+      c_additional_options="-DCONFIG_NFCT_PINS_AS_GPIOS" />
+  </project>
+
+  relevant snippets in emProject file after modified it again:
+  one definition of CONFIG_NFCT_PINS_AS_GPIOS:
+    <folder Name="None">
+      <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf52840.s" />
+      <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf_common.s" />
+      <file file_name="../../../../../../modules/nrfx/mdk/system_nrf52840.c" />
+    </folder>
+    <configuration
+      Name="Debug"
+      c_additional_options=""
+      c_preprocessor_definitions="CONFIG_NFCT_PINS_AS_GPIOS" />
+  </project>
+
+
+  pin usage restrictions based on nfc pins documentation, 
+  https://infocenter.nordicsemi.com/index.jsp?topic=%2Fcom.nordic.infocenter.nrf52832.ps.v1.1%2Fpin.html&cp=3_1_0_3_2_1&anchor=concept_sq5_lcz_2q
+    Pin assignments
+    GPIO usage restrictions
+    GPIO located near the radio
+    NFC antenna pins
+
+    the two pins has leakage between them. better use them to set the same value
+
+

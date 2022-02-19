@@ -94,6 +94,8 @@
       <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf_common.s" />
       <file file_name="../../../../../../modules/nrfx/mdk/system_nrf52840.c" />
     </folder>
+    <configuration Name="Debug"
+      c_preprocessor_definitions="CONFIG_NFCT_PINS_AS_GPIOS" />
   </project>
   <configuration Name="Release"
     c_preprocessor_definitions="NDEBUG"

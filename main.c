@@ -91,6 +91,20 @@ int main(void)
     NRF_LOG_INFO("SPI pins 20 32 31 13: %d %d %d %d", SPI_SS_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SPI_SCK_PIN);
     NRF_LOG_PROCESS();
 
+    /* use nfc pins */
+    nrf_gpio_cfg_output(9);
+    nrf_gpio_cfg_output(10);
+    nrf_gpio_pin_set(9);  /* init to high */
+    nrf_gpio_pin_set(10); /* init to high */
+
+        nrf_delay_ms(50); /* +50ms after power up */
+        nrf_gpio_pin_clear(9);
+        nrf_gpio_pin_clear(10);
+
+        nrf_delay_ms(20); /* reset negative pulse 20ms */
+        nrf_gpio_pin_set(9);  /* set high again */
+        nrf_gpio_pin_set(10); /* set high again */
+
     uint32_t loop_count = 0;
     NRF_LOG_INFO("SPI example loop count %u", ++loop_count);
     NRF_LOG_PROCESS();
