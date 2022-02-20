@@ -57,6 +57,11 @@ static uint8_t       m_tx_buf[] = TEST_STRING;           /**< TX buffer. */
 static uint8_t       m_rx_buf[sizeof(TEST_STRING) + 1];    /**< RX buffer. */
 static const uint8_t m_length = sizeof(m_tx_buf);        /**< Transfer length. */
 
+#define DISPLAY_RX_BUSY_FLAG (0)
+#if defined(DISPLAY_RX_BUSY_FLAG) && (DISPLAY_RX_BUSY_FLAG)
+static uint32_t      m_rx_wait_loops = 0;
+#endif
+
 /**
  * @brief SPI user event handler.
  * @param event
@@ -84,7 +89,16 @@ static int display_xfer(uint8_t rw, uint8_t rs, uint8_t data)
     m_tx_buf[2] = ((data&0x10) << 3) | ((data&0x20) << 1) | ((data&0x40) >> 1) | ((data&0x80) >> 3);
 
         spi_xfer_done = false;
-        ret_code_t rc = nrf_drv_spi_transfer(&spi, m_tx_buf, 3, m_rx_buf, 3);
+        uint8_t sz = 3;
+#if defined(DISPLAY_RX_BUSY_FLAG) && (DISPLAY_RX_BUSY_FLAG)
+        if ( rw ) { /* for read */
+            m_tx_buf[1] = 0; /* when reading, the mosi must be 0 on the data byte */
+            m_rx_buf[0] = 0;
+            m_rx_wait_loops = 0;
+            sz = 2;
+        }
+#endif
+        ret_code_t rc = nrf_drv_spi_transfer(&spi, m_tx_buf, sz, m_rx_buf, sz);
         if (rc != NRF_SUCCESS) {
             return 1;
         }
@@ -101,8 +115,21 @@ static int display_xfer(uint8_t rw, uint8_t rs, uint8_t data)
                     NRF_LOG_PROCESS();
                 }
             }
-            nrf_delay_ms(1);
+#if !(defined(DISPLAY_RX_BUSY_FLAG) && (DISPLAY_RX_BUSY_FLAG))
+            nrf_delay_ms(1); /* tx delay 1ms when waiting */
         }
+#else
+            #if 0 /* no tx delay 1ms when waiting */
+            ;
+            #elif 1 /* tx delay 1ms when waiting */
+            if ( rw == 0 ) /* delay by 1ms only when writing */
+                nrf_delay_ms(1); /* tx delay 1ms when waiting */
+            #elif 1 /* rx delay 1ms when waiting too */
+            nrf_delay_ms(1); /* tx delay 1ms when waiting */
+            #endif
+        }
+        if ( rw ) m_rx_wait_loops = inner_loop_count;
+#endif
     #undef LED2_BLUE
 
     return 0;
@@ -153,10 +180,48 @@ static int display_sequence_run(uint8_t *seqd, uint32_t seq_sz)
         int rc2 = display_xfer(0, 0, seqd[seq_idx]);
         if ( rc2 != 0 ) {
             rc1 = 1;
-            NRF_LOG_INFO("SPI sequence  %u  rc2 %d  failed", seq_idx, rc2);
+            NRF_LOG_INFO("SPI sequence  %u  wr  rc2 %d  failed", seq_idx, rc2);
             NRF_LOG_FLUSH();
             break;
         }
+
+#if defined(DISPLAY_RX_BUSY_FLAG) && (DISPLAY_RX_BUSY_FLAG)
+        /* read busy flag */
+        uint32_t rd_loop = 0;
+        int found_rd_ready = 0; /* not found yet */
+        for (rd_loop = 0; rd_loop < 1000; rd_loop ++ ) { /* loop max 1000 * 1ms delay = 1 sec */
+            int rc3 = display_xfer(1/*read*/, 0/*rs=0*/, seqd[seq_idx]/* dummy data for read */);
+            if ( rc3 != 0 ) {
+                rc1 = 1;
+                NRF_LOG_INFO("SPI sequence  %u  rd  rc3 %d  failed", seq_idx, rc3);
+                NRF_LOG_FLUSH();
+                break;
+            }
+            NRF_LOG_INFO("SPI sequence  %u  rd  rc3 %d  data 0x%08x xfer rx wait loops %u", 
+                            seq_idx, rc3, m_rx_buf[0], m_rx_wait_loops);
+                            /* at freq 1M, no tx delay 1ms when waiting, rx wait loops is about 29. 
+                             * at freq 125K, no tx delay 1ms when waiting, rx wait loops is about 237.
+                             * add back tx delay 1ms when waiting, rx wait loops is about 202.
+                             # enable rx delay 1ms when waiting, rx wait loops is about 1.
+                             */
+            NRF_LOG_PROCESS();
+            if ( (m_rx_buf[0] & 1) == 0 ) { /* b7 busy flag, check b0 on little-endian spi rx */
+                found_rd_ready = 1; /* controller finished processing */
+                break;
+            }
+            nrf_delay_ms(1);
+        }
+        if ( rc1 ) break;
+        if ( found_rd_ready == 0 ) {
+            rc1 = 1;
+            NRF_LOG_INFO("SPI sequence  %u  rd  wait  failed", seq_idx);
+            NRF_LOG_FLUSH();
+            break;
+        }
+        NRF_LOG_INFO("SPI sequence  %u  rd  wait  loop %u", seq_idx, rd_loop);
+        NRF_LOG_FLUSH();
+#endif
+
         bsp_board_led_invert(LED2_GREEN);
         nrf_delay_ms(10);
         bsp_board_led_invert(LED2_GREEN);
