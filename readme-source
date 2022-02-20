@@ -115,3 +115,9 @@ nfc pins for gpio:
     the two pins has leakage between them. better use them to set the same value
 
 
+lcd display 
+
+  lcd model: EA DOGS164B-A 
+  library that might be useful: https://github.com/firexx/SSD1803a_I2C 
+
+
