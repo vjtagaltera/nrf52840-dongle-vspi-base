@@ -1,0 +1,911 @@
+commit 1234567
+Date:   Sun Feb 20 07:39:14 2022 -0800
+
+    spi lcd part 2 of 2 initial code new files
+    can be applied to the vcp_twi project to add a spi lcd display
+
+---
+ main_spi_lcd.c                             | 369 +++++++++++++++++++++
+ main_spi_lcd.h                             |  18 ++
+ pca10059/blank/config/sdk_config_spi_lcd.h | 494 +++++++++++++++++++++++++++++
+ 3 files changed, 881 insertions(+)
+
+diff --git a/main_spi_lcd.c b/main_spi_lcd.c
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/main_spi_lcd.c
+@@ -0,0 +1,369 @@
++/**
++ * Copyright (c) 2015 - 2020, Nordic Semiconductor ASA
++ *
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without modification,
++ * are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice, this
++ *    list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form, except as embedded into a Nordic
++ *    Semiconductor ASA integrated circuit in a product or a software update for
++ *    such product, must reproduce the above copyright notice, this list of
++ *    conditions and the following disclaimer in the documentation and/or other
++ *    materials provided with the distribution.
++ *
++ * 3. Neither the name of Nordic Semiconductor ASA nor the names of its
++ *    contributors may be used to endorse or promote products derived from this
++ *    software without specific prior written permission.
++ *
++ * 4. This software, with or without modification, must only be used with a
++ *    Nordic Semiconductor ASA integrated circuit.
++ *
++ * 5. Any software provided in binary form under this license must not be reverse
++ *    engineered, decompiled, modified and/or disassembled.
++ *
++ * THIS SOFTWARE IS PROVIDED BY NORDIC SEMICONDUCTOR ASA "AS IS" AND ANY EXPRESS
++ * OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY, NONINFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ * DISCLAIMED. IN NO EVENT SHALL NORDIC SEMICONDUCTOR ASA OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
++ * GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
++ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#include "nrf_drv_spi.h"
++#include "app_util_platform.h"
++#include "nrf_gpio.h"
++#include "nrf_delay.h"
++#include "boards.h"
++#include "app_error.h"
++#include <string.h>
++#include "nrf_log.h"
++#include "nrf_log_ctrl.h"
++#include "nrf_log_default_backends.h"
++
++#include "nrf_log.h"
++#include "nrf_log_ctrl.h"
++#include "nrf_log_default_backends.h"
++
++#include "main_spi_lcd.h"
++
++#define SPI_INSTANCE  2 /**< SPI instance index. must use 2 to avoid conflict w twi0 twi1 */
++static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);  /**< SPI instance. */
++static volatile bool spi_xfer_done;  /**< Flag used to indicate that SPI instance completed the transfer. */
++
++#define TEST_STRING "Nordic"
++static uint8_t       m_tx_buf[] = TEST_STRING;           /**< TX buffer. */
++static uint8_t       m_rx_buf[sizeof(TEST_STRING) + 1];    /**< RX buffer. */
++static const uint8_t m_length = sizeof(m_tx_buf);        /**< Transfer length. */
++
++#define SPI_SS_PIN    20
++#define SPI_MISO_PIN  32
++#define SPI_MOSI_PIN  31
++#define SPI_SCK_PIN   13
++
++
++/* -------------------------------------------------------- */
++
++/**
++ * @brief SPI user event handler.
++ * @param event
++ */
++void spi_event_handler(nrf_drv_spi_evt_t const * p_event,
++                       void *                    p_context)
++{
++    spi_xfer_done = true;
++    NRF_LOG_INFO("SPI Transfer completed.");
++    if (m_rx_buf[0] != 0)
++    {
++        NRF_LOG_INFO("SPI Received:");
++        NRF_LOG_HEXDUMP_INFO(m_rx_buf, strlen((const char *)m_rx_buf));
++    }
++}
++
++/* -------------------------------------------------------- */
++/* EA DOGS164B-A LCD MOD 64DIG 16X4 TRANSMISV WHT */
++
++static int spi_lcd_xfer(uint8_t rw, uint8_t rs, uint8_t data)
++{
++    if ( m_length < 3 ) {
++        return 1; /* fail */
++    }
++
++    memset(m_tx_buf, 0, 3);
++    m_tx_buf[0] = 0xf8 | ((rw&1) << 2) |( (rs&1) << 1);
++    m_tx_buf[1] = ((data&1) << 7) | ((data&2) << 5) | ((data&4) << 3) | ((data&8) << 1);
++    m_tx_buf[2] = ((data&0x10) << 3) | ((data&0x20) << 1) | ((data&0x40) >> 1) | ((data&0x80) >> 3);
++
++        memset(m_rx_buf, 0, m_length);
++        spi_xfer_done = false;
++        uint8_t sz = 3;
++        ret_code_t rc = nrf_drv_spi_transfer(&spi, m_tx_buf, sz, m_rx_buf, sz);
++        if (rc != NRF_SUCCESS) {
++            NRF_LOG_ERROR("SPI xfer failed to start!");
++            log_wait_ms(2);
++            return 1; /* fail */
++        }
++
++        /* at 125k, a lcd write transfer of 24 bits takes about 200us */
++        const uint32_t loop_max = 10; /* timeout in 20 ms */
++        uint32_t loop_count = 0;
++        while (!spi_xfer_done)
++        {
++            if ( ++loop_count > loop_max ) {
++                NRF_LOG_ERROR("SPI xfer timeout!");
++                log_wait_ms(2);
++                return 1; /* fail */
++            }
++            log_wait_ms(2);
++        }
++
++    return 0; /* ok */
++}
++
++static int spi_lcd_sequence_run(uint8_t *seqd, uint32_t seq_sz)
++{
++    int rc1 = 0;
++
++    uint32_t seq_idx = 0;
++    for ( seq_idx = 0; seq_idx < seq_sz; seq_idx ++) {
++        int rc2 = spi_lcd_xfer(0, 0, seqd[seq_idx]);
++        if ( rc2 != 0 ) {
++            rc1 = 1;
++            NRF_LOG_INFO("SPI sequence  %u/%u  wr  rc2 %d  failed", seq_idx, seq_sz, rc2);
++            log_wait_ms(2);
++            break;
++        }
++
++        NRF_LOG_INFO("SPI sequence  %u/%u  rc2 %d", seq_idx, seq_sz, rc2);
++        log_wait_ms(2);
++    }
++    return rc1;
++}
++
++static int spi_lcd_sequence_init()
++{
++    uint8_t seqd[] = {0x3a, 0x09, 0x06, 0x1e, 0x39, 0x1b, 0x6c,
++                        0x56, //0x56, /* bit 1:0==c5:c4 */
++                        0x7a, /* bit 3:0==c3:c0 */
++                        0x38,
++                            /* rotate by 180 degree */
++                            //0x3a,
++                            //0x05, /* 0x06==bottom_view, 0x05==top_view */
++                            //0x38,
++                        0x0f};
++    uint32_t seq_sz = sizeof(seqd);
++    return spi_lcd_sequence_run(seqd, seq_sz);
++}
++
++static int spi_lcd_sequence_contrast_set(uint8_t val)
++{
++    uint8_t seqd[] = {0x39,
++                        0x54 | ((val & 0x30) >> 4), //0x56, /* bit 1:0==c5:c4 */
++                        0x70 | ((val & 0x0f)     ), //0x7a, /* bit 3:0==c3:c0 */
++                        0x38};
++    uint32_t seq_sz = sizeof(seqd);
++    return spi_lcd_sequence_run(seqd, seq_sz);
++}
++
++static int spi_lcd_sequence_rom_a_select()
++{
++    uint8_t seqd[] = {0x3a, 0x72,
++                        0x00, /* 0x00 rom a, 0x04 rom b, 0x08/0x0c rom c */
++                        0x38};
++    uint32_t seq_sz = sizeof(seqd);
++    return spi_lcd_sequence_run(seqd, seq_sz);
++}
++
++static int spi_lcd_sequence_return_home()
++{
++    uint8_t seqd[] = {0x39, 0x2, 0x38, 0x0f};
++    uint32_t seq_sz = sizeof(seqd);
++    return spi_lcd_sequence_run(seqd, seq_sz);
++}
++
++/* -------------------------------------------------------- */
++
++static int spi_lcd_run_init_sequence()
++{
++    int rc = 0;
++
++    /* init */
++    NRF_LOG_INFO("    SEQUENCE init ... ");
++    NRF_LOG_PROCESS();
++    rc = spi_lcd_sequence_init();
++    NRF_LOG_INFO("    SEQUENCE init ... done rc %d ", rc);
++    NRF_LOG_PROCESS();
++    if ( rc != 0 ) return 1;
++
++    /* contrast  val 31 */
++    uint8_t val = 31;
++    rc = spi_lcd_sequence_contrast_set(val);
++    NRF_LOG_INFO("  CONTRAST set      val %u  rc %d", val, rc);
++    NRF_LOG_PROCESS();
++
++    /* display function set:
++     *      0x38  :  RE=0, IS=0
++     *      0x39  :  RE=0, IS=1
++     *      0x3a  :  RE=1, REV=0
++     *      0x3b  :  RE=1, REV=1
++     * clear display:
++     *      RE/IS=x/x rs/rw=0/0 data=1
++     * return home:
++     *      RE/IS=0/x rs/rw=0/0 data=2
++     * entry mode:
++     *      RE/IS=0/x rs/rw=0/0 data bit7:3=0, bit2=1, bit1=(high=move_right), bit0=(0=no_shift)
++     * set ddram address:
++     *      RE/IS=0/x rs/rw=0/0 data bit7=1, bit6:0=ac6:0
++     * write data:
++     *      RE/IS=x/x rs/rw=1/0 data=data
++     * rom selection
++     *      RE/IS=x/x rs/rw=1/0 data=(0x00 select rom A)
++     */
++
++    nrf_delay_ms(100); NRF_LOG_PROCESS();
++
++    //rc = spi_lcd_sequence_rom_a_select();
++    //NRF_LOG_INFO("  ROM-A             rc %d", rc); NRF_LOG_PROCESS();
++    //nrf_delay_ms(10);
++    //if ( rc != 0 ) return 1;
++
++    rc = spi_lcd_sequence_return_home();
++    NRF_LOG_INFO("  HOME              rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    //rc = spi_lcd_xfer(0, 0, 6);
++    //NRF_LOG_INFO("  ENTRY             rc %d", rc); NRF_LOG_PROCESS();
++    //nrf_delay_ms(10);
++    //if ( rc != 0 ) return 1;
++
++    /* clear screen */
++    rc = spi_lcd_xfer(0, 0, 1);
++    NRF_LOG_INFO("  CLEAR             rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    /* ddram 0 */
++    rc = spi_lcd_xfer(0, 0, 0x80);
++    NRF_LOG_INFO("  DDRAM 0x00        rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    NRF_LOG_INFO("  WRITE data line 1"); NRF_LOG_PROCESS();
++
++    int wr_idx = 0;
++    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
++        rc = spi_lcd_xfer(0, 1/*rs*/, 'A' + wr_idx);
++        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
++        nrf_delay_ms(10);
++        if ( rc != 0 ) {
++            return 1;
++        }
++        NRF_LOG_PROCESS();
++    }
++
++    /* ddram 0x20 */
++    rc = spi_lcd_xfer(0, 0, 0x80 + 0x20);
++    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    NRF_LOG_INFO("  WRITE data line 2"); NRF_LOG_PROCESS();
++
++    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
++        rc = spi_lcd_xfer(0, 1/*rs*/, 'a' + wr_idx);
++        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
++        nrf_delay_ms(10);
++        if ( rc != 0 ) {
++            return 1;
++        }
++        NRF_LOG_PROCESS();
++    }
++
++    /* ddram 0x48 */
++    rc = spi_lcd_xfer(0, 0, 0x80 + 0x48);
++    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    NRF_LOG_INFO("  WRITE data line 3"); NRF_LOG_PROCESS();
++
++    for ( wr_idx = 0; wr_idx < 4; wr_idx ++ ) {
++        rc = spi_lcd_xfer(0, 1/*rs*/, 'a' + wr_idx);
++        NRF_LOG_INFO("  WRITE data %d", wr_idx); NRF_LOG_PROCESS();
++        nrf_delay_ms(10);
++        if ( rc != 0 ) {
++            return 1;
++        }
++        NRF_LOG_PROCESS();
++    }
++
++    /* ddram 0x60 */
++    rc = spi_lcd_xfer(0, 0, 0x80 + 0x60);
++    NRF_LOG_INFO("  DDRAM 0x20        rc %d", rc); NRF_LOG_PROCESS();
++    nrf_delay_ms(10);
++    if ( rc != 0 ) return 1;
++
++    NRF_LOG_INFO("  WRITE data line 4"); NRF_LOG_PROCESS();
++
++    return 0;
++}
++
++/* -------------------------------------------------------- */
++
++int spi_lcd_init()
++{
++    nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
++    spi_config.ss_pin   = SPI_SS_PIN;
++    spi_config.miso_pin = SPI_MISO_PIN;
++    spi_config.mosi_pin = SPI_MOSI_PIN;
++    spi_config.sck_pin  = SPI_SCK_PIN;
++    spi_config.mode     = NRF_DRV_SPI_MODE_3;
++    spi_config.frequency = NRF_SPI_FREQ_125K;
++
++    ret_code_t errc = nrf_drv_spi_init(&spi, &spi_config, spi_event_handler, NULL);
++    if ( errc != NRF_SUCCESS ) {
++        NRF_LOG_ERROR("SPI spi_lcd_init() nrf_drv_spi_init() failed.");
++        log_wait_ms(2);
++        return 1; /* fail */
++    }
++
++    NRF_LOG_INFO("SPI started.");
++    NRF_LOG_INFO("SPI pins 20 32 31 13: %d %d %d %d", SPI_SS_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SPI_SCK_PIN);
++    log_wait_ms(2);
++
++    /* use nfc pins */
++    nrf_gpio_cfg_output(9);
++    nrf_gpio_cfg_output(10);
++    nrf_gpio_pin_set(9);  /* init to high */
++    nrf_gpio_pin_set(10); /* init to high */
++
++    NRF_LOG_INFO("LCD reset ...");
++        log_wait_ms(50); /* +50ms after power up */
++        nrf_gpio_pin_clear(9);
++        nrf_gpio_pin_clear(10);
++
++        log_wait_ms(20); /* reset negative pulse 20ms */
++        nrf_gpio_pin_set(9);  /* set high again */
++        nrf_gpio_pin_set(10); /* set high again */
++
++    log_wait_ms(2);
++
++    int rc = spi_lcd_run_init_sequence();
++    if ( rc != 0 ) {
++        NRF_LOG_ERROR("SPI SPI spi_lcd_init() spi_lcd_sequence() failed!");
++        log_wait_ms(2);
++    }
++    log_wait_ms(800);
++
++    return rc;
++}
++
+diff --git a/main_spi_lcd.h b/main_spi_lcd.h
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/main_spi_lcd.h
+@@ -0,0 +1,18 @@
++/*
++ * main_spi_lcd.h
++ */
++
++#ifndef MAIN_SPI_LCD_H
++#define MAIN_SPI_LCD_H
++
++
++extern int spi_lcd_init(void);
++
++
++/* main.c provides */
++extern uint32_t m_custom_ms_counter;
++extern void log_wait_ms(uint32_t ms);
++
++
++#endif /* MAIN_SPI_LCD_H */
++
+diff --git a/pca10059/blank/config/sdk_config_spi_lcd.h b/pca10059/blank/config/sdk_config_spi_lcd.h
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/pca10059/blank/config/sdk_config_spi_lcd.h
+@@ -0,0 +1,494 @@
++/**
++ * Copyright (c) 2017 - 2020, Nordic Semiconductor ASA
++ *
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without modification,
++ * are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice, this
++ *    list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form, except as embedded into a Nordic
++ *    Semiconductor ASA integrated circuit in a product or a software update for
++ *    such product, must reproduce the above copyright notice, this list of
++ *    conditions and the following disclaimer in the documentation and/or other
++ *    materials provided with the distribution.
++ *
++ * 3. Neither the name of Nordic Semiconductor ASA nor the names of its
++ *    contributors may be used to endorse or promote products derived from this
++ *    software without specific prior written permission.
++ *
++ * 4. This software, with or without modification, must only be used with a
++ *    Nordic Semiconductor ASA integrated circuit.
++ *
++ * 5. Any software provided in binary form under this license must not be reverse
++ *    engineered, decompiled, modified and/or disassembled.
++ *
++ * THIS SOFTWARE IS PROVIDED BY NORDIC SEMICONDUCTOR ASA "AS IS" AND ANY EXPRESS
++ * OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY, NONINFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ * DISCLAIMED. IN NO EVENT SHALL NORDIC SEMICONDUCTOR ASA OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
++ * GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
++ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++
++
++#ifndef SDK_CONFIG_SPI_LCD_H
++#define SDK_CONFIG_SPI_LCD_H
++
++/* ---------------------------------------------------------- */
++/* spi related from spi/.../sdk_config.h */
++
++// <h> Application
++
++//==========================================================
++// <h> SPI_CONFIGURATION - Spi configuration
++
++//==========================================================
++// <o> SPI_SCK_PIN  - Pin number
++
++/* ... ignore SPI_.._PIN ... */
++
++// <o> SPI_IRQ_PRIORITY  - Interrupt priority
++
++// <i> Priorities 0,2 (nRF51) and 0,1,4,5 (nRF52) are reserved for SoftDevice
++// <0=> 0 (highest)
++// <1=> 1
++// <2=> 2
++// <3=> 3
++// <4=> 4
++// <5=> 5
++// <6=> 6
++// <7=> 7
++
++#ifndef SPI_IRQ_PRIORITY
++#define SPI_IRQ_PRIORITY 6
++#endif
++
++// </h>
++//==========================================================
++
++// </h>
++//==========================================================
++
++
++// <e> NRFX_SPIM_ENABLED - nrfx_spim - SPIM peripheral driver
++//==========================================================
++#ifndef NRFX_SPIM_ENABLED
++#define NRFX_SPIM_ENABLED 1
++#endif
++// <q> NRFX_SPIM0_ENABLED  - Enable SPIM0 instance
++
++
++#ifndef NRFX_SPIM0_ENABLED
++#define NRFX_SPIM0_ENABLED 0
++#endif
++
++// <q> NRFX_SPIM1_ENABLED  - Enable SPIM1 instance
++
++
++#ifndef NRFX_SPIM1_ENABLED
++#define NRFX_SPIM1_ENABLED 0
++#endif
++
++// <q> NRFX_SPIM2_ENABLED  - Enable SPIM2 instance
++
++
++#ifndef NRFX_SPIM2_ENABLED
++#define NRFX_SPIM2_ENABLED 0
++#endif
++
++// <q> NRFX_SPIM3_ENABLED  - Enable SPIM3 instance
++
++
++#ifndef NRFX_SPIM3_ENABLED
++#define NRFX_SPIM3_ENABLED 0
++#endif
++
++// <q> NRFX_SPIM_EXTENDED_ENABLED  - Enable extended SPIM features
++
++
++#ifndef NRFX_SPIM_EXTENDED_ENABLED
++#define NRFX_SPIM_EXTENDED_ENABLED 0
++#endif
++
++// <o> NRFX_SPIM_MISO_PULL_CFG  - MISO pin pull configuration.
++
++// <0=> NRF_GPIO_PIN_NOPULL
++// <1=> NRF_GPIO_PIN_PULLDOWN
++// <3=> NRF_GPIO_PIN_PULLUP
++
++#ifndef NRFX_SPIM_MISO_PULL_CFG
++#define NRFX_SPIM_MISO_PULL_CFG 1
++#endif
++
++// <o> NRFX_SPIM_DEFAULT_CONFIG_IRQ_PRIORITY  - Interrupt priority
++
++// <0=> 0 (highest)
++// <1=> 1
++// <2=> 2
++// <3=> 3
++// <4=> 4
++// <5=> 5
++// <6=> 6
++// <7=> 7
++
++#ifndef NRFX_SPIM_DEFAULT_CONFIG_IRQ_PRIORITY
++#define NRFX_SPIM_DEFAULT_CONFIG_IRQ_PRIORITY 6
++#endif
++
++// <e> NRFX_SPIM_CONFIG_LOG_ENABLED - Enables logging in the module.
++//==========================================================
++#ifndef NRFX_SPIM_CONFIG_LOG_ENABLED
++#define NRFX_SPIM_CONFIG_LOG_ENABLED 0
++#endif
++// <o> NRFX_SPIM_CONFIG_LOG_LEVEL  - Default Severity level
++
++// <0=> Off
++// <1=> Error
++// <2=> Warning
++// <3=> Info
++// <4=> Debug
++
++#ifndef NRFX_SPIM_CONFIG_LOG_LEVEL
++#define NRFX_SPIM_CONFIG_LOG_LEVEL 3
++#endif
++
++// <o> NRFX_SPIM_CONFIG_INFO_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef NRFX_SPIM_CONFIG_INFO_COLOR
++#define NRFX_SPIM_CONFIG_INFO_COLOR 0
++#endif
++
++// <o> NRFX_SPIM_CONFIG_DEBUG_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef NRFX_SPIM_CONFIG_DEBUG_COLOR
++#define NRFX_SPIM_CONFIG_DEBUG_COLOR 0
++#endif
++
++// </e>
++
++// </e>
++
++// <e> NRFX_SPI_ENABLED - nrfx_spi - SPI peripheral driver
++//==========================================================
++#ifndef NRFX_SPI_ENABLED
++#define NRFX_SPI_ENABLED 1
++#endif
++// <q> NRFX_SPI0_ENABLED  - Enable SPI0 instance
++
++
++#ifndef NRFX_SPI0_ENABLED
++#define NRFX_SPI0_ENABLED 0
++#endif
++
++// <q> NRFX_SPI1_ENABLED  - Enable SPI1 instance
++
++
++#ifndef NRFX_SPI1_ENABLED
++#define NRFX_SPI1_ENABLED 0
++#endif
++
++// <q> NRFX_SPI2_ENABLED  - Enable SPI2 instance
++
++
++#ifndef NRFX_SPI2_ENABLED
++#define NRFX_SPI2_ENABLED 0
++#endif
++
++// <o> NRFX_SPI_MISO_PULL_CFG  - MISO pin pull configuration.
++
++// <0=> NRF_GPIO_PIN_NOPULL
++// <1=> NRF_GPIO_PIN_PULLDOWN
++// <3=> NRF_GPIO_PIN_PULLUP
++
++#ifndef NRFX_SPI_MISO_PULL_CFG
++#define NRFX_SPI_MISO_PULL_CFG 1
++#endif
++
++// <o> NRFX_SPI_DEFAULT_CONFIG_IRQ_PRIORITY  - Interrupt priority
++
++// <0=> 0 (highest)
++// <1=> 1
++// <2=> 2
++// <3=> 3
++// <4=> 4
++// <5=> 5
++// <6=> 6
++// <7=> 7
++
++#ifndef NRFX_SPI_DEFAULT_CONFIG_IRQ_PRIORITY
++#define NRFX_SPI_DEFAULT_CONFIG_IRQ_PRIORITY 6
++#endif
++
++// <e> NRFX_SPI_CONFIG_LOG_ENABLED - Enables logging in the module.
++//==========================================================
++#ifndef NRFX_SPI_CONFIG_LOG_ENABLED
++#define NRFX_SPI_CONFIG_LOG_ENABLED 0
++#endif
++// <o> NRFX_SPI_CONFIG_LOG_LEVEL  - Default Severity level
++
++// <0=> Off
++// <1=> Error
++// <2=> Warning
++// <3=> Info
++// <4=> Debug
++
++#ifndef NRFX_SPI_CONFIG_LOG_LEVEL
++#define NRFX_SPI_CONFIG_LOG_LEVEL 3
++#endif
++
++// <o> NRFX_SPI_CONFIG_INFO_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef NRFX_SPI_CONFIG_INFO_COLOR
++#define NRFX_SPI_CONFIG_INFO_COLOR 0
++#endif
++
++// <o> NRFX_SPI_CONFIG_DEBUG_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef NRFX_SPI_CONFIG_DEBUG_COLOR
++#define NRFX_SPI_CONFIG_DEBUG_COLOR 0
++#endif
++
++// </e>
++
++// </e>
++
++
++// <e> SPI_ENABLED - nrf_drv_spi - SPI/SPIM peripheral driver - legacy layer
++//==========================================================
++#ifndef SPI_ENABLED
++#define SPI_ENABLED 1
++#endif
++// <o> SPI_DEFAULT_CONFIG_IRQ_PRIORITY  - Interrupt priority
++
++
++// <i> Priorities 0,2 (nRF51) and 0,1,4,5 (nRF52) are reserved for SoftDevice
++// <0=> 0 (highest)
++// <1=> 1
++// <2=> 2
++// <3=> 3
++// <4=> 4
++// <5=> 5
++// <6=> 6
++// <7=> 7
++
++#ifndef SPI_DEFAULT_CONFIG_IRQ_PRIORITY
++#define SPI_DEFAULT_CONFIG_IRQ_PRIORITY 6
++#endif
++
++// <o> NRF_SPI_DRV_MISO_PULLUP_CFG  - MISO PIN pull-up configuration.
++
++// <0=> NRF_GPIO_PIN_NOPULL
++// <1=> NRF_GPIO_PIN_PULLDOWN
++// <3=> NRF_GPIO_PIN_PULLUP
++
++#ifndef NRF_SPI_DRV_MISO_PULLUP_CFG
++#define NRF_SPI_DRV_MISO_PULLUP_CFG 1
++#endif
++
++// <e> SPI0_ENABLED - Enable SPI0 instance
++//==========================================================
++#ifndef SPI0_ENABLED
++#define SPI0_ENABLED 0
++#endif
++// <q> SPI0_USE_EASY_DMA  - Use EasyDMA
++
++
++#ifndef SPI0_USE_EASY_DMA
++#define SPI0_USE_EASY_DMA 1
++#endif
++
++// </e>
++
++// <e> SPI1_ENABLED - Enable SPI1 instance
++//==========================================================
++#ifndef SPI1_ENABLED
++#define SPI1_ENABLED 0
++#endif
++// <q> SPI1_USE_EASY_DMA  - Use EasyDMA
++
++
++#ifndef SPI1_USE_EASY_DMA
++#define SPI1_USE_EASY_DMA 1
++#endif
++
++// </e>
++
++// <e> SPI2_ENABLED - Enable SPI2 instance
++//==========================================================
++#ifndef SPI2_ENABLED
++#define SPI2_ENABLED 1
++#endif
++// <q> SPI2_USE_EASY_DMA  - Use EasyDMA
++
++
++#ifndef SPI2_USE_EASY_DMA
++#define SPI2_USE_EASY_DMA 1
++#endif
++
++// </e>
++
++// </e>
++
++
++
++// <e> SPIS_CONFIG_LOG_ENABLED - Enables logging in the module.
++//==========================================================
++#ifndef SPIS_CONFIG_LOG_ENABLED
++#define SPIS_CONFIG_LOG_ENABLED 0
++#endif
++// <o> SPIS_CONFIG_LOG_LEVEL  - Default Severity level
++
++// <0=> Off
++// <1=> Error
++// <2=> Warning
++// <3=> Info
++// <4=> Debug
++
++#ifndef SPIS_CONFIG_LOG_LEVEL
++#define SPIS_CONFIG_LOG_LEVEL 3
++#endif
++
++// <o> SPIS_CONFIG_INFO_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef SPIS_CONFIG_INFO_COLOR
++#define SPIS_CONFIG_INFO_COLOR 0
++#endif
++
++// <o> SPIS_CONFIG_DEBUG_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef SPIS_CONFIG_DEBUG_COLOR
++#define SPIS_CONFIG_DEBUG_COLOR 0
++#endif
++
++// </e>
++
++// <e> SPI_CONFIG_LOG_ENABLED - Enables logging in the module.
++//==========================================================
++#ifndef SPI_CONFIG_LOG_ENABLED
++#define SPI_CONFIG_LOG_ENABLED 0
++#endif
++// <o> SPI_CONFIG_LOG_LEVEL  - Default Severity level
++
++// <0=> Off
++// <1=> Error
++// <2=> Warning
++// <3=> Info
++// <4=> Debug
++
++#ifndef SPI_CONFIG_LOG_LEVEL
++#define SPI_CONFIG_LOG_LEVEL 3
++#endif
++
++// <o> SPI_CONFIG_INFO_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef SPI_CONFIG_INFO_COLOR
++#define SPI_CONFIG_INFO_COLOR 0
++#endif
++
++// <o> SPI_CONFIG_DEBUG_COLOR  - ANSI escape code prefix.
++
++// <0=> Default
++// <1=> Black
++// <2=> Red
++// <3=> Green
++// <4=> Yellow
++// <5=> Blue
++// <6=> Magenta
++// <7=> Cyan
++// <8=> White
++
++#ifndef SPI_CONFIG_DEBUG_COLOR
++#define SPI_CONFIG_DEBUG_COLOR 0
++#endif
++
++// </e>
++
++
++/* ---------------------------------------------------------- */
++/* slip copied from peripheral/usbd_ble_uart */
++
++
++/* ---------------------------------------------------------- */
++
++#endif //SDK_CONFIG_SPI_LCD_H
++
++

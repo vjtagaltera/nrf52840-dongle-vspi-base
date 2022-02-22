@@ -1,0 +1,94 @@
+commit 1234568
+Date:   Sun Feb 20 07:38:01 2022 -0800
+
+    spi lcd part 1 of 2 initial code modification
+    can be applied to the vcp_twi project to add a spi lcd display
+
+---
+ main.c                                      | 7 +++++++
+ main_twi.h                                  | 2 +-
+ pca10059/blank/config/sdk_config.h          | 1 +
+ pca10059/blank/ses/pca10059.emProject       | 8 ++++++++
+ 4 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/main.c b/main.c
+index 1234567..1234568 100755
+--- a/main.c
++++ b/main.c
+@@ -68,6 +68,8 @@
+ #include "nrf_log_default_backends.h"
+ 
+ #include "main_twi.h"
++#include "main_spi_lcd.h"
++
+ 
+ #if NRF_CLI_ENABLED
+ /**
+@@ -458,6 +460,11 @@ int main(void)
+     twi_init();
+     NRF_LOG_INFO("TWI started.");
+     log_wait_ms(20);
++
++    NRF_LOG_INFO("LCD starting ...");
++    spi_lcd_init();
++    NRF_LOG_INFO("LCD started.");
++
+     /* -------------------------------------------- */
+ 
+     while (true)
+diff --git a/pca10059/blank/config/sdk_config.h b/pca10059/blank/config/sdk_config.h
+index 1234567..1234568 100755
+--- a/pca10059/blank/config/sdk_config.h
++++ b/pca10059/blank/config/sdk_config.h
+@@ -374,6 +374,7 @@
+ 
+ // </e>
+ #include "sdk_config_twi.h"
++#include "sdk_config_spi_lcd.h"
+ 
+ // <q> NRFX_SYSTICK_ENABLED  - nrfx_systick - ARM(R) SysTick driver
+  
+diff --git a/pca10059/blank/ses/pca10059.emProject b/pca10059/blank/ses/pca10059.emProject
+index 1234567..1234568 100755
+--- a/pca10059/blank/ses/pca10059.emProject
++++ b/pca10059/blank/ses/pca10059.emProject
+@@ -84,6 +84,7 @@
+     <folder Name="nRF_Drivers">
+       <file file_name="../../../../../../integration/nrfx/legacy/nrf_drv_clock.c" />
+       <file file_name="../../../../../../integration/nrfx/legacy/nrf_drv_power.c" />
++      <file file_name="../../../../../../integration/nrfx/legacy/nrf_drv_spi.c" />
+       <file file_name="../../../../../../integration/nrfx/legacy/nrf_drv_twi.c" />
+       <file file_name="../../../../../../integration/nrfx/legacy/nrf_drv_uart.c" />
+       <file file_name="../../../../../../components/drivers_nrf/nrf_soc_nosd/nrf_nvic.c" />
+@@ -93,6 +94,8 @@
+       <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_gpiote.c" />
+       <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_power.c" />
+       <file file_name="../../../../../../modules/nrfx/drivers/src/prs/nrfx_prs.c" />
++      <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_spi.c" />
++      <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_spim.c" />
+       <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_systick.c" />
+       <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_twi.c" />
+       <file file_name="../../../../../../modules/nrfx/drivers/src/nrfx_twim.c" />
+@@ -108,10 +111,13 @@
+       <file file_name="../../../main.c" />
+       <file file_name="../../../main_twi.c" />
+       <file file_name="../../../main_twi.h" />
++      <file file_name="../../../main_spi_lcd.c" />
++      <file file_name="../../../main_spi_lcd.h" />
+       <file file_name="../../../modified_slip.c" />
+       <file file_name="../../../modified_slip.h" />
+       <file file_name="../config/sdk_config.h" />
+       <file file_name="../config/sdk_config_twi.h" />
++      <file file_name="../config/sdk_config_spi_lcd.h" />
+     </folder>
+     <folder Name="nRF_Segger_RTT">
+       <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />
+@@ -126,6 +132,8 @@
+     <folder Name="UTF8/UTF16 converter">
+       <file file_name="../../../../../../external/utf_converter/utf.c" />
+     </folder>
++    <configuration Name="Debug"
++      c_preprocessor_definitions="CONFIG_NFCT_PINS_AS_GPIOS" />
+   </project>
+   <configuration Name="Release"
+     c_preprocessor_definitions="NDEBUG"
